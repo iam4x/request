@@ -52,9 +52,15 @@ export const request = async <T>(req: Request) => {
     if (!response.ok) {
       let errorData: unknown;
       try {
-        errorData = await response.json();
+        // Read as text first, then try to parse as JSON
+        const errorText = await response.text();
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = errorText;
+        }
       } catch {
-        errorData = await response.text();
+        errorData = "";
       }
       throw new RequestError(
         `Request failed with status ${response.status}`,

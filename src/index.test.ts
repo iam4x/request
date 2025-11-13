@@ -217,4 +217,67 @@ describe("request utility", () => {
     expect(result).toEqual(mockJsonResponse);
     expect(callCount).toBe(3); // Should have retried 2 times (3 total calls)
   });
+
+  test("handles error response with invalid JSON without body already used error", async () => {
+    // Mock fetch to return an error response with invalid JSON
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          text: () => Promise.resolve("invalid json {"),
+        }) as unknown as Response,
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+      });
+      expect.unreachable("Expected RequestError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).status).toBe(500);
+      expect((error as RequestError).statusText).toBe("Internal Server Error");
+      expect((error as RequestError).message).toContain(
+        "Request failed with status 500",
+      );
+      // Should contain the text response since JSON parsing failed
+      expect((error as RequestError).response).toBe("invalid json {");
+    }
+  });
+
+  test("handles error response with valid JSON", async () => {
+    const errorResponse = { error: "Something went wrong" };
+    // Mock fetch to return an error response with valid JSON
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          text: () => Promise.resolve(JSON.stringify(errorResponse)),
+        }) as unknown as Response,
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+      });
+      expect.unreachable("Expected RequestError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).status).toBe(400);
+      expect((error as RequestError).statusText).toBe("Bad Request");
+      expect((error as RequestError).message).toContain(
+        "Request failed with status 400",
+      );
+      // Should contain the parsed JSON object
+      expect((error as RequestError).response).toEqual(errorResponse);
+    }
+  });
 });
