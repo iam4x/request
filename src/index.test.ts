@@ -180,4 +180,41 @@ describe("request utility", () => {
       expect((error as RequestError).response).toBe("");
     }
   });
+
+  test("retries request when JSON parsing fails", async () => {
+    // Restore the real retry implementation for this test
+    spyOn(retryUtils, "retry").mockImplementation(originalRetry);
+
+    let callCount = 0;
+    // Mock fetch to fail with invalid JSON twice, then succeed
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(() => {
+      callCount++;
+      if (callCount < 3) {
+        // First two calls return invalid JSON
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve("invalid json {"),
+        }) as unknown as Response;
+      }
+      // Third call succeeds with valid JSON
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: () => Promise.resolve(JSON.stringify(mockJsonResponse)),
+      }) as unknown as Response;
+    });
+
+    const result = await request({
+      url: "https://api.example.com/data",
+      retries: 3,
+    });
+
+    expect(result).toEqual(mockJsonResponse);
+    expect(callCount).toBe(3); // Should have retried 2 times (3 total calls)
+  });
 });
