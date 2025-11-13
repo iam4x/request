@@ -64,6 +64,21 @@ export const request = async <T>(req: Request) => {
       );
     }
 
-    return response.json() as Promise<T>;
+    let responseText: string = "";
+    try {
+      responseText = await response.text();
+      if (!responseText.trim()) {
+        throw new Error("Empty response body");
+      }
+      return JSON.parse(responseText) as T;
+    } catch (error) {
+      // If parsing fails, use the text we already read (or empty string if text() failed)
+      throw new RequestError(
+        `Failed to parse JSON response: ${error instanceof Error ? error.message : String(error)}`,
+        response.status,
+        response.statusText,
+        responseText,
+      );
+    }
   }, req.retries ?? 0);
 };

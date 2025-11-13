@@ -10,7 +10,7 @@ import {
 
 import * as retryUtils from "./utils/retry.utils";
 
-import { request } from "./index";
+import { request, RequestError } from "./index";
 
 describe("request utility", () => {
   const originalFetch = global.fetch;
@@ -31,7 +31,7 @@ describe("request utility", () => {
           ok: true,
           status: 200,
           statusText: "OK",
-          json: () => Promise.resolve(mockJsonResponse),
+          text: () => Promise.resolve(JSON.stringify(mockJsonResponse)),
         }) as unknown as Response,
     );
   });
@@ -118,5 +118,66 @@ describe("request utility", () => {
     });
 
     expect(retryUtils.retry).toHaveBeenCalledWith(expect.any(Function), 0);
+  });
+
+  test("throws RequestError when response is 200 but contains invalid JSON", async () => {
+    // Mock fetch to return a successful response with invalid JSON
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve("invalid json {"),
+        }) as unknown as Response,
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+      });
+      expect.unreachable("Expected RequestError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).status).toBe(200);
+      expect((error as RequestError).statusText).toBe("OK");
+      expect((error as RequestError).message).toContain(
+        "Failed to parse JSON response",
+      );
+      expect((error as RequestError).response).toBe("invalid json {");
+    }
+  });
+
+  test("throws RequestError when response is 200 but body is empty", async () => {
+    // Mock fetch to return a successful response with empty body
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(""),
+        }) as unknown as Response,
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+      });
+      expect.unreachable("Expected RequestError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).status).toBe(200);
+      expect((error as RequestError).statusText).toBe("OK");
+      expect((error as RequestError).message).toContain(
+        "Failed to parse JSON response",
+      );
+      expect((error as RequestError).message).toContain("Empty response body");
+      expect((error as RequestError).response).toBe("");
+    }
   });
 });
