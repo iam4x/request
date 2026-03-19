@@ -21,6 +21,7 @@ export type Request = {
   body?: RequestParams;
   retries?: number;
   proxy?: string;
+  timeout?: number;
 };
 
 export class RequestError extends Error {
@@ -35,11 +36,25 @@ export class RequestError extends Error {
   }
 }
 
+export class RequestTimeoutError extends Error {
+  constructor(public timeout: number) {
+    super(`Request timed out after ${timeout}ms`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
 export const request = async <T>(req: Request) => {
   return retry(async () => {
     const url = req.params
       ? `${req.url}?${stringify(omitUndefined(req.params))}`
       : req.url;
+
+    const controller = req.timeout ? new AbortController() : null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    if (controller && req.timeout) {
+      timeoutId = setTimeout(() => controller.abort(), req.timeout);
+    }
 
     const fetchOptions: RequestInit & { proxy?: string } = {
       method: req.method ?? "GET",
@@ -48,13 +63,25 @@ export const request = async <T>(req: Request) => {
         "content-type": "application/json",
         ...(req.headers || {}),
       },
+      ...(controller ? { signal: controller.signal } : {}),
     };
 
     if (req.proxy) {
       fetchOptions.proxy = req.proxy;
     }
 
-    const response = await fetch(url, fetchOptions);
+    let response: Response;
+    try {
+      response = await fetch(url, fetchOptions);
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (controller?.signal.aborted) {
+        throw new RequestTimeoutError(req.timeout!);
+      }
+      throw error;
+    }
+
+    if (timeoutId) clearTimeout(timeoutId);
 
     if (!response.ok) {
       let errorData: unknown;

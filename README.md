@@ -6,6 +6,7 @@ A lightweight, TypeScript-first HTTP request utility with built-in retry logic, 
 
 - 🚀 **Simple API** - Clean, intuitive interface for making HTTP requests
 - 🔄 **Built-in Retry Logic** - Automatic retry mechanism for failed requests
+- ⏱️ **Timeout Support** - Per-request timeouts via `AbortController` with retry-aware behaviour
 - 🔗 **Query String Utilities** - Parse and stringify query parameters with support for arrays and nested objects
 - 🧹 **Automatic Cleanup** - Filters out undefined values from request bodies and params
 - 📦 **TypeScript First** - Full TypeScript support with comprehensive type definitions
@@ -75,6 +76,8 @@ Makes an HTTP request with the specified options.
 - `req.params` (RequestParams, optional) - Query string parameters (automatically converted to query string)
 - `req.body` (RequestParams, optional) - Request body (automatically JSON stringified)
 - `req.retries` (number, optional) - Number of retry attempts on failure. Defaults to `0`
+- `req.timeout` (number, optional) - Request timeout in milliseconds. Uses `AbortController` internally. If both `timeout` and `retries` are set, each retry gets its own fresh timeout
+- `req.proxy` (string, optional) - Proxy URL to route the request through (runtime-dependent)
 
 #### Returns
 
@@ -142,6 +145,44 @@ const data = await request({
 });
 ```
 
+### Timeout
+
+Use `timeout` (in milliseconds) to abort a request that takes too long. A fresh `AbortController` is created for every attempt, so each retry gets its own independent timeout window:
+
+```typescript
+import { request, RequestTimeoutError } from '@iam4x/request';
+
+// Abort if the server doesn't respond within 5 seconds
+const data = await request({
+  url: 'https://api.example.com/slow-endpoint',
+  timeout: 5000,
+});
+
+// Combine with retries — each attempt has its own 3-second window
+try {
+  const data = await request({
+    url: 'https://api.example.com/slow-endpoint',
+    timeout: 3000,
+    retries: 2, // up to 3 total attempts
+  });
+} catch (error) {
+  if (error instanceof RequestTimeoutError) {
+    console.error(`All attempts timed out after ${error.timeout}ms each`);
+  }
+}
+```
+
+### Proxy
+
+Route requests through a proxy by providing the proxy URL. Support depends on your runtime environment:
+
+```typescript
+const data = await request({
+  url: 'https://api.example.com/data',
+  proxy: 'http://my-proxy.internal:8080',
+});
+```
+
 ### Type Safety
 
 The request function is fully typed. Specify your response type for full type safety:
@@ -161,19 +202,23 @@ const user = await request<User>({
 
 ### Error Handling
 
-The `request` function throws a `RequestError` for non-2xx HTTP responses:
+The `request` function throws a `RequestError` for non-2xx HTTP responses and a `RequestTimeoutError` when the timeout is exceeded on every attempt:
 
 ```typescript
-import { request, RequestError } from '@iam4x/request';
+import { request, RequestError, RequestTimeoutError } from '@iam4x/request';
 
 try {
   const data = await request({
     url: 'https://api.example.com/users/999',
+    timeout: 5000,
   });
 } catch (error) {
   if (error instanceof RequestError) {
     console.error(`Request failed: ${error.status} ${error.statusText}`);
     console.error('Response data:', error.response);
+  }
+  if (error instanceof RequestTimeoutError) {
+    console.error(`Timed out after ${error.timeout}ms`);
   }
 }
 ```
@@ -184,6 +229,11 @@ try {
 - `status` (number) - HTTP status code
 - `statusText` (string) - HTTP status text
 - `response` (unknown) - Parsed response body (JSON or text)
+
+#### `RequestTimeoutError` Class
+
+- `message` (string) - Error message (`"Request timed out after {n}ms"`)
+- `timeout` (number) - The timeout value that was exceeded, in milliseconds
 
 ## RequestParams Type
 
@@ -210,7 +260,8 @@ The `RequestParams` type supports:
 The package exports:
 
 - `request` - Main request function
-- `RequestError` - Error class for failed requests
+- `RequestError` - Error class for non-2xx HTTP responses
+- `RequestTimeoutError` - Error class thrown when a request exceeds its timeout
 - `Request` - Type for request options
 - `RequestParams` - Type for request parameters/body
 

@@ -10,7 +10,7 @@ import {
 
 import * as retryUtils from "./utils/retry.utils";
 
-import { request, RequestError } from "./index";
+import { request, RequestError, RequestTimeoutError } from "./index";
 
 describe("request utility", () => {
   const originalFetch = global.fetch;
@@ -278,6 +278,157 @@ describe("request utility", () => {
       );
       // Should contain the parsed JSON object
       expect((error as RequestError).response).toEqual(errorResponse);
+    }
+  });
+});
+
+describe("request timeout", () => {
+  const originalFetch = global.fetch;
+  const originalRetry = retryUtils.retry;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    spyOn(retryUtils, "retry").mockImplementation(originalRetry);
+  });
+
+  test("passes an AbortSignal to fetch when timeout is set", async () => {
+    const mockJsonResponse = { data: "ok" };
+    spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
+
+    let capturedSignal: AbortSignal | undefined;
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock((_, opts) => {
+      capturedSignal = opts?.signal;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: () => Promise.resolve(JSON.stringify(mockJsonResponse)),
+      }) as unknown as Response;
+    });
+
+    await request({ url: "https://api.example.com/data", timeout: 5000 });
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("does not pass a signal to fetch when timeout is not set", async () => {
+    const mockJsonResponse = { data: "ok" };
+    spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
+
+    let capturedSignal: AbortSignal | undefined;
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock((_, opts) => {
+      capturedSignal = opts?.signal;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: () => Promise.resolve(JSON.stringify(mockJsonResponse)),
+      }) as unknown as Response;
+    });
+
+    await request({ url: "https://api.example.com/data" });
+
+    expect(capturedSignal).toBeUndefined();
+  });
+
+  test("throws RequestTimeoutError when the request exceeds the timeout", async () => {
+    spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
+
+    // fetch never resolves — the AbortController will cancel it
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        }),
+    );
+
+    try {
+      await request({ url: "https://api.example.com/data", timeout: 50 });
+      expect.unreachable("Expected RequestTimeoutError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestTimeoutError);
+      expect((error as RequestTimeoutError).message).toBe(
+        "Request timed out after 50ms",
+      );
+      expect((error as RequestTimeoutError).timeout).toBe(50);
+    }
+  });
+
+  test("retries on timeout and succeeds if a later attempt completes in time", async () => {
+    spyOn(retryUtils, "retry").mockImplementation(originalRetry);
+
+    let callCount = 0;
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock((_url: string, opts: RequestInit) => {
+      callCount++;
+      if (callCount < 3) {
+        // First two attempts time out
+        return new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        });
+      }
+      // Third attempt resolves immediately (well within timeout)
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        text: () => Promise.resolve(JSON.stringify({ data: "ok" })),
+      }) as unknown as Response;
+    });
+
+    const result = await request({
+      url: "https://api.example.com/data",
+      timeout: 50,
+      retries: 3,
+    });
+
+    expect(result).toEqual({ data: "ok" });
+    expect(callCount).toBe(3);
+  });
+
+  test("throws RequestTimeoutError after exhausting all retries on timeout", async () => {
+    spyOn(retryUtils, "retry").mockImplementation(originalRetry);
+
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      (_url: string, opts: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        }),
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+        timeout: 50,
+        retries: 2,
+      });
+      expect.unreachable("Expected RequestTimeoutError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestTimeoutError);
+      expect((error as RequestTimeoutError).message).toBe(
+        "Request timed out after 50ms",
+      );
     }
   });
 });
