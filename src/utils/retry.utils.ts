@@ -3,6 +3,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export const retry = async <T>(
   fn: () => Promise<T>,
   retries = 3,
+  tryCount = 1,
 ): Promise<T> => {
   try {
     return await fn();
@@ -11,7 +12,7 @@ export const retry = async <T>(
       throw error;
     }
     // Wait before retrying (100ms delay)
-    await sleep(100);
-    return retry(fn, retries - 1);
+    await sleep(100 * tryCount);
+    return retry(fn, retries - 1, tryCount + 1);
   }
 };
