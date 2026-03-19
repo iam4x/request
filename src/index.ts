@@ -20,6 +20,7 @@ export type Request = {
   params?: RequestParams;
   body?: RequestParams;
   retries?: number;
+  proxy?: string;
 };
 
 export class RequestError extends Error {
@@ -40,14 +41,20 @@ export const request = async <T>(req: Request) => {
       ? `${req.url}?${stringify(omitUndefined(req.params))}`
       : req.url;
 
-    const response = await fetch(url, {
+    const fetchOptions: RequestInit & { proxy?: string } = {
       method: req.method ?? "GET",
       body: req.body ? JSON.stringify(omitUndefined(req.body)) : undefined,
       headers: {
         "content-type": "application/json",
         ...(req.headers || {}),
       },
-    });
+    };
+
+    if (req.proxy) {
+      fetchOptions.proxy = req.proxy;
+    }
+
+    const response = await fetch(url, fetchOptions);
 
     if (!response.ok) {
       let errorData: unknown;
