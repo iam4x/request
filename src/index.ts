@@ -50,10 +50,13 @@ export const request = async <T>(req: Request) => {
       : req.url;
 
     const controller = req.timeout ? new AbortController() : null;
+    const timeoutError = req.timeout
+      ? new RequestTimeoutError(req.timeout)
+      : null;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    if (controller && req.timeout) {
-      timeoutId = setTimeout(() => controller.abort(), req.timeout);
+    if (controller && req.timeout && timeoutError) {
+      timeoutId = setTimeout(() => controller.abort(timeoutError), req.timeout);
     }
 
     const fetchOptions: RequestInit & { proxy?: string } = {
@@ -70,55 +73,62 @@ export const request = async <T>(req: Request) => {
       fetchOptions.proxy = req.proxy;
     }
 
-    let response: Response;
     try {
-      response = await fetch(url, fetchOptions);
+      const response = await fetch(url, fetchOptions);
+
+      if (!response.ok) {
+        let errorData: unknown;
+        try {
+          // Read as text first, then try to parse as JSON
+          const errorText = await response.text();
+          try {
+            errorData = JSON.parse(errorText);
+          } catch {
+            errorData = errorText;
+          }
+        } catch {
+          if (controller?.signal.aborted && timeoutError) {
+            throw timeoutError;
+          }
+          errorData = "";
+        }
+        throw new RequestError(
+          `Request failed with status ${response.status}`,
+          response.status,
+          response.statusText,
+          errorData,
+        );
+      }
+
+      let responseText: string = "";
+      try {
+        responseText = await response.text();
+        if (!responseText.trim()) {
+          throw new Error("Empty response body");
+        }
+        return JSON.parse(responseText) as T;
+      } catch (error) {
+        if (error instanceof RequestTimeoutError) {
+          throw error;
+        }
+        if (controller?.signal.aborted && timeoutError) {
+          throw timeoutError;
+        }
+        // If parsing fails, use the text we already read (or empty string if text() failed)
+        throw new RequestError(
+          `Failed to parse JSON response: ${error instanceof Error ? error.message : String(error)}`,
+          response.status,
+          response.statusText,
+          responseText,
+        );
+      }
     } catch (error) {
-      if (timeoutId) clearTimeout(timeoutId);
-      if (controller?.signal.aborted) {
-        throw new RequestTimeoutError(req.timeout!);
+      if (controller?.signal.aborted && timeoutError) {
+        throw timeoutError;
       }
       throw error;
-    }
-
-    if (timeoutId) clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      let errorData: unknown;
-      try {
-        // Read as text first, then try to parse as JSON
-        const errorText = await response.text();
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = errorText;
-        }
-      } catch {
-        errorData = "";
-      }
-      throw new RequestError(
-        `Request failed with status ${response.status}`,
-        response.status,
-        response.statusText,
-        errorData,
-      );
-    }
-
-    let responseText: string = "";
-    try {
-      responseText = await response.text();
-      if (!responseText.trim()) {
-        throw new Error("Empty response body");
-      }
-      return JSON.parse(responseText) as T;
-    } catch (error) {
-      // If parsing fails, use the text we already read (or empty string if text() failed)
-      throw new RequestError(
-        `Failed to parse JSON response: ${error instanceof Error ? error.message : String(error)}`,
-        response.status,
-        response.statusText,
-        responseText,
-      );
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
     }
   }, req.retries ?? 0);
 };
