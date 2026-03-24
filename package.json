@@ -1,6 +1,6 @@
 {
   "name": "@iam4x/request",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "A lightweight, TypeScript-first HTTP request utility with built-in retry logic, query string handling, and automatic undefined value filtering",
   "keywords": [
     "http",
