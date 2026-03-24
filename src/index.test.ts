@@ -84,6 +84,32 @@ describe("request utility", () => {
     });
   });
 
+  test("makes a HEAD request and allows an empty response body", async () => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(""),
+        }) as unknown as Response,
+    );
+
+    const result = await request<void>({
+      url: "https://api.example.com/data",
+      method: "HEAD",
+    });
+
+    expect(result).toBeUndefined();
+    expect(global.fetch).toHaveBeenCalledWith("https://api.example.com/data", {
+      method: "HEAD",
+      body: undefined,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
   test("includes custom headers in the request", async () => {
     await request({
       url: "https://api.example.com/data",

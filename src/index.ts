@@ -16,7 +16,7 @@ export type RequestParams = Record<
 export type Request = {
   url: string;
   headers?: Record<string, string>;
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "HEAD" | "POST" | "PUT" | "DELETE";
   params?: RequestParams;
   body?: RequestParams;
   retries?: number;
@@ -104,6 +104,9 @@ export const request = async <T>(req: Request) => {
       try {
         responseText = await response.text();
         if (!responseText.trim()) {
+          if (fetchOptions.method === "HEAD") {
+            return undefined as T;
+          }
           throw new Error("Empty response body");
         }
         return JSON.parse(responseText) as T;

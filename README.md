@@ -71,7 +71,7 @@ Makes an HTTP request with the specified options.
 #### Parameters
 
 - `req.url` (string, required) - The URL to make the request to
-- `req.method` (string, optional) - HTTP method (`GET`, `POST`, `PUT`, `DELETE`). Defaults to `GET`
+- `req.method` (string, optional) - HTTP method (`GET`, `HEAD`, `POST`, `PUT`, `DELETE`). Defaults to `GET`
 - `req.headers` (Record<string, string>, optional) - Custom headers to include in the request
 - `req.params` (RequestParams, optional) - Query string parameters (automatically converted to query string)
 - `req.body` (RequestParams, optional) - Request body (automatically JSON stringified)
