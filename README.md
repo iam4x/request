@@ -9,6 +9,7 @@ A lightweight, TypeScript-first HTTP request utility with built-in retry logic, 
 - ⏱️ **Timeout Support** - Per-request timeouts via `AbortController` with retry-aware behaviour
 - 🔗 **Query String Utilities** - Parse and stringify query parameters with support for arrays and nested objects
 - 🧹 **Automatic Cleanup** - Filters out undefined values from request bodies and params
+- 📝 **Opt-in Text Responses** - Return raw text for CSV or plain-text endpoints while keeping JSON as the default
 - 📦 **TypeScript First** - Full TypeScript support with comprehensive type definitions
 - ⚡ **Zero Dependencies** - Uses native `fetch` API, no external HTTP libraries required
 - 🎯 **Tree Shakeable** - Import only what you need
@@ -75,13 +76,16 @@ Makes an HTTP request with the specified options.
 - `req.headers` (Record<string, string>, optional) - Custom headers to include in the request
 - `req.params` (RequestParams, optional) - Query string parameters (automatically converted to query string)
 - `req.body` (RequestParams, optional) - Request body (automatically JSON stringified)
+- `req.responseType` (`"json" | "text"`, optional) - Successful response parsing mode. Defaults to `"json"`
 - `req.retries` (number, optional) - Number of retry attempts on failure. Defaults to `0`
 - `req.timeout` (number, optional) - Request timeout in milliseconds. Uses `AbortController` internally. If both `timeout` and `retries` are set, each retry gets its own fresh timeout
 - `req.proxy` (string, optional) - Proxy URL to route the request through (runtime-dependent)
 
 #### Returns
 
-`Promise<T>` - The parsed JSON response
+`Promise<T>` - The parsed JSON response by default
+
+When `responseType: "text"` is set, the return type is `Promise<string>` and the response body is returned as-is.
 
 #### Example
 
@@ -100,6 +104,22 @@ const response = await request<ApiResponse>({
     email: 'john@example.com',
   },
   retries: 3,
+});
+```
+
+### Text Responses
+
+Use `responseType: 'text'` when the endpoint returns raw text such as CSV or plain text. This only changes how successful responses are parsed. Request bodies are still JSON-stringified as before.
+
+```typescript
+const text = await request({
+  url: 'https://api.example.com/health',
+  responseType: 'text',
+});
+
+const csv = await request({
+  url: 'https://api.example.com/export.csv',
+  responseType: 'text',
 });
 ```
 
@@ -198,6 +218,12 @@ const user = await request<User>({
   url: 'https://api.example.com/users/1',
 });
 // user is typed as User
+
+const csv = await request({
+  url: 'https://api.example.com/users/export.csv',
+  responseType: 'text',
+});
+// csv is typed as string
 ```
 
 ### Error Handling
@@ -251,6 +277,7 @@ The `RequestParams` type supports:
 
 - **Undefined Values**: Automatically filtered out from `params` and `body`
 - **Content-Type**: Automatically set to `application/json` for requests with a body
+- **Response Parsing**: Successful responses are parsed as JSON by default; use `responseType: "text"` for raw text or CSV payloads
 - **Query String Encoding**: Special characters are automatically URL-encoded
 - **Array Parameters**: Arrays in query params are serialized as repeated keys (`?tags=js&tags=ts`)
 - **Nested Objects**: Nested objects in query params use bracket notation (`?user[name]=John`)

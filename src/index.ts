@@ -19,6 +19,7 @@ export type Request = {
   method?: "GET" | "HEAD" | "POST" | "PUT" | "DELETE";
   params?: RequestParams;
   body?: RequestParams;
+  responseType?: "json" | "text";
   retries?: number;
   proxy?: string;
   timeout?: number;
@@ -43,7 +44,13 @@ export class RequestTimeoutError extends Error {
   }
 }
 
-export const request = async <T>(req: Request) => {
+export function request(
+  req: Request & { responseType: "text" },
+): Promise<string>;
+export function request<T>(
+  req: Request & { responseType?: "json" },
+): Promise<T>;
+export async function request<T>(req: Request) {
   return retry(async () => {
     const url = req.params
       ? `${req.url}?${stringify(omitUndefined(req.params))}`
@@ -107,7 +114,13 @@ export const request = async <T>(req: Request) => {
           if (fetchOptions.method === "HEAD") {
             return undefined as T;
           }
+          if (req.responseType === "text") {
+            return responseText;
+          }
           throw new Error("Empty response body");
+        }
+        if (req.responseType === "text") {
+          return responseText;
         }
         return JSON.parse(responseText) as T;
       } catch (error) {
@@ -134,4 +147,4 @@ export const request = async <T>(req: Request) => {
       if (timeoutId !== null) clearTimeout(timeoutId);
     }
   }, req.retries ?? 0);
-};
+}

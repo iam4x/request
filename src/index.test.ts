@@ -207,6 +207,71 @@ describe("request utility", () => {
     }
   });
 
+  test("returns plain text when responseType is text", async () => {
+    const textResponse = "plain text response";
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(textResponse),
+        }) as unknown as Response,
+    );
+
+    const result = await request({
+      url: "https://api.example.com/data",
+      responseType: "text",
+    });
+
+    expect(result).toBe(textResponse);
+  });
+
+  test("returns CSV when responseType is text", async () => {
+    const csvResponse = "id,name\n1,John Doe\n2,Jane Doe";
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(csvResponse),
+        }) as unknown as Response,
+    );
+
+    const result = await request({
+      url: "https://api.example.com/data.csv",
+      responseType: "text",
+    });
+
+    expect(result).toBe(csvResponse);
+  });
+
+  test("returns empty text when responseType is text", async () => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(""),
+        }) as unknown as Response,
+    );
+
+    const result = await request({
+      url: "https://api.example.com/data",
+      responseType: "text",
+    });
+
+    expect(result).toBe("");
+  });
+
   test("retries request when JSON parsing fails", async () => {
     // Restore the real retry implementation for this test
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
@@ -303,6 +368,34 @@ describe("request utility", () => {
         "Request failed with status 400",
       );
       // Should contain the parsed JSON object
+      expect((error as RequestError).response).toEqual(errorResponse);
+    }
+  });
+
+  test("handles error response in text mode with the existing fallback", async () => {
+    const errorResponse = { error: "Something went wrong" };
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error
+    global.fetch = mock(
+      () =>
+        Promise.resolve({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          text: () => Promise.resolve(JSON.stringify(errorResponse)),
+        }) as unknown as Response,
+    );
+
+    try {
+      await request({
+        url: "https://api.example.com/data",
+        responseType: "text",
+      });
+      expect.unreachable("Expected RequestError to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).status).toBe(400);
+      expect((error as RequestError).statusText).toBe("Bad Request");
       expect((error as RequestError).response).toEqual(errorResponse);
     }
   });
