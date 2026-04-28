@@ -80,6 +80,7 @@ Makes an HTTP request with the specified options.
 - `req.retries` (number, optional) - Number of retry attempts on failure. Defaults to `0`
 - `req.timeout` (number, optional) - Request timeout in milliseconds. Uses `AbortController` internally. If both `timeout` and `retries` are set, each retry gets its own fresh timeout
 - `req.proxy` (string, optional) - Proxy URL to route the request through (runtime-dependent)
+- `req.keepalive` (boolean, optional) - Forwarded to `fetch` when provided. In Bun, set `false` to disable connection reuse for the request
 
 #### Returns
 
@@ -200,6 +201,17 @@ Route requests through a proxy by providing the proxy URL. Support depends on yo
 const data = await request({
   url: 'https://api.example.com/data',
   proxy: 'http://my-proxy.internal:8080',
+});
+```
+
+### Keepalive
+
+Bun enables connection reuse by default. Set `keepalive: false` to disable it for a single request, or omit the option to preserve the runtime default:
+
+```typescript
+const data = await request({
+  url: 'https://api.example.com/data',
+  keepalive: false,
 });
 ```
 

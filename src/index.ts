@@ -23,6 +23,7 @@ export type Request = {
   retries?: number;
   proxy?: string;
   timeout?: number;
+  keepalive?: boolean;
 };
 
 export class RequestError extends Error {
@@ -78,6 +79,10 @@ export async function request<T>(req: Request) {
 
     if (req.proxy) {
       fetchOptions.proxy = req.proxy;
+    }
+
+    if (req.keepalive !== undefined) {
+      fetchOptions.keepalive = req.keepalive;
     }
 
     try {

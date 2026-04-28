@@ -129,6 +129,34 @@ describe("request utility", () => {
     });
   });
 
+  test("passes keepalive false to fetch when specified", async () => {
+    await request({
+      url: "https://api.example.com/data",
+      keepalive: false,
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("https://api.example.com/data", {
+      method: "GET",
+      body: undefined,
+      headers: { "content-type": "application/json" },
+      keepalive: false,
+    });
+  });
+
+  test("passes keepalive true to fetch when specified", async () => {
+    await request({
+      url: "https://api.example.com/data",
+      keepalive: true,
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("https://api.example.com/data", {
+      method: "GET",
+      body: undefined,
+      headers: { "content-type": "application/json" },
+      keepalive: true,
+    });
+  });
+
   test("uses the retry utility with specified retry count", async () => {
     await request({
       url: "https://api.example.com/data",
