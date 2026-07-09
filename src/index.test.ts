@@ -2,6 +2,7 @@ import {
   test,
   describe,
   expect,
+  jest,
   mock,
   spyOn,
   beforeEach,
@@ -37,6 +38,7 @@ describe("request utility", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     global.fetch = originalFetch;
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
   });
@@ -301,8 +303,19 @@ describe("request utility", () => {
   });
 
   test("retries request when JSON parsing fails", async () => {
-    // Restore the real retry implementation for this test
-    spyOn(retryUtils, "retry").mockImplementation(originalRetry);
+    spyOn(retryUtils, "retry").mockImplementation(async (fn, retries = 0) => {
+      let lastError: unknown;
+
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await fn();
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError;
+    });
 
     let callCount = 0;
     // Mock fetch to fail with invalid JSON twice, then succeed
@@ -434,6 +447,11 @@ describe("request timeout", () => {
   const originalRetry = retryUtils.retry;
   const originalClearTimeout = globalThis.clearTimeout;
 
+  const advanceTimersByTime = async (milliseconds: number) => {
+    await Promise.resolve();
+    jest.advanceTimersByTime(milliseconds);
+  };
+
   const createTextResponse = ({
     ok = true,
     status = 200,
@@ -453,6 +471,7 @@ describe("request timeout", () => {
     }) as unknown as Response;
 
   afterEach(() => {
+    jest.useRealTimers();
     global.fetch = originalFetch;
     globalThis.clearTimeout = originalClearTimeout;
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
@@ -503,6 +522,7 @@ describe("request timeout", () => {
   });
 
   test("throws RequestTimeoutError when the request exceeds the timeout", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
 
     // fetch never resolves — the AbortController will cancel it
@@ -519,8 +539,15 @@ describe("request timeout", () => {
         }),
     );
 
+    const resultPromise = request({
+      url: "https://api.example.com/data",
+      timeout: 50,
+    });
+
+    await advanceTimersByTime(50);
+
     try {
-      await request({ url: "https://api.example.com/data", timeout: 50 });
+      await resultPromise;
       expect.unreachable("Expected RequestTimeoutError to be thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(RequestTimeoutError);
@@ -532,6 +559,7 @@ describe("request timeout", () => {
   });
 
   test("throws RequestTimeoutError when the response body stalls", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
 
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -557,8 +585,15 @@ describe("request timeout", () => {
       ),
     );
 
+    const resultPromise = request({
+      url: "https://api.example.com/data",
+      timeout: 50,
+    });
+
+    await advanceTimersByTime(50);
+
     try {
-      await request({ url: "https://api.example.com/data", timeout: 50 });
+      await resultPromise;
       expect.unreachable("Expected RequestTimeoutError to be thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(RequestTimeoutError);
@@ -567,6 +602,7 @@ describe("request timeout", () => {
   });
 
   test("retries on timeout and succeeds if a later attempt completes in time", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
 
     let callCount = 0;
@@ -593,17 +629,24 @@ describe("request timeout", () => {
       }) as unknown as Response;
     });
 
-    const result = await request({
+    const resultPromise = request({
       url: "https://api.example.com/data",
       timeout: 50,
       retries: 3,
     });
 
+    await advanceTimersByTime(50);
+    await advanceTimersByTime(100);
+    await advanceTimersByTime(50);
+    await advanceTimersByTime(200);
+
+    const result = await resultPromise;
     expect(result).toEqual({ data: "ok" });
     expect(callCount).toBe(3);
   });
 
   test("retries when the first body read times out and succeeds on a later attempt", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
 
     let callCount = 0;
@@ -640,17 +683,22 @@ describe("request timeout", () => {
       );
     });
 
-    const result = await request({
+    const resultPromise = request({
       url: "https://api.example.com/data",
       timeout: 50,
       retries: 1,
     });
 
+    await advanceTimersByTime(50);
+    await advanceTimersByTime(100);
+
+    const result = await resultPromise;
     expect(result).toEqual({ data: "ok" });
     expect(callCount).toBe(2);
   });
 
   test("throws RequestTimeoutError after exhausting all retries on timeout", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation(originalRetry);
 
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -666,12 +714,20 @@ describe("request timeout", () => {
         }),
     );
 
+    const resultPromise = request({
+      url: "https://api.example.com/data",
+      timeout: 50,
+      retries: 2,
+    });
+
+    await advanceTimersByTime(50);
+    await advanceTimersByTime(100);
+    await advanceTimersByTime(50);
+    await advanceTimersByTime(200);
+    await advanceTimersByTime(50);
+
     try {
-      await request({
-        url: "https://api.example.com/data",
-        timeout: 50,
-        retries: 2,
-      });
+      await resultPromise;
       expect.unreachable("Expected RequestTimeoutError to be thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(RequestTimeoutError);
@@ -707,6 +763,7 @@ describe("request timeout", () => {
   });
 
   test("clears the timeout timer after a timed out body read", async () => {
+    jest.useFakeTimers();
     spyOn(retryUtils, "retry").mockImplementation((fn, _retries) => fn());
 
     const clearTimeoutMock = mock(
@@ -739,8 +796,15 @@ describe("request timeout", () => {
       ),
     );
 
+    const resultPromise = request({
+      url: "https://api.example.com/data",
+      timeout: 50,
+    });
+
+    await advanceTimersByTime(50);
+
     try {
-      await request({ url: "https://api.example.com/data", timeout: 50 });
+      await resultPromise;
       expect.unreachable("Expected RequestTimeoutError to be thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(RequestTimeoutError);
