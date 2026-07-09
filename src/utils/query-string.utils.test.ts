@@ -20,7 +20,12 @@ describe("stringify", () => {
 
   test("should handle null and undefined values", () => {
     const obj = { a: null, b: undefined, c: "value" };
-    expect(stringify(obj)).toBe("a&b&c=value");
+    expect(stringify(obj)).toBe("a&c=value");
+  });
+
+  test("should omit undefined array values and serialize null as a flag", () => {
+    const obj = { a: [1, undefined, null, 2] };
+    expect(stringify(obj)).toBe("a=1&a&a=2");
   });
 
   test("should properly encode special characters", () => {
