@@ -6,14 +6,27 @@ export const stringify = (obj: Record<string, any>): string => {
   for (const key in obj) {
     const value = obj[key];
 
-    if (value === null || value === undefined) {
-      parts.push(key);
+    if (value === undefined) {
+      continue;
+    }
+
+    if (value === null) {
+      parts.push(encodeURIComponent(key));
       continue;
     }
 
     // Handle arrays
     if (Array.isArray(value)) {
       for (const item of value) {
+        if (item === undefined) {
+          continue;
+        }
+
+        if (item === null) {
+          parts.push(encodeURIComponent(key));
+          continue;
+        }
+
         parts.push(
           `${encodeURIComponent(key)}=${encodeURIComponent(String(item))}`,
         );
