@@ -231,10 +231,7 @@ Single-URL callers are unchanged. A list without `timeout` gets a 10 second conn
 
 ```typescript
 const data = await request({
-  url: [
-    "https://charts.proliquid.xyz/range",
-    "https://charts.api-proliquid.com/range",
-  ],
+  url: ["https://api.example.com/range", "https://backup.example.com/range"],
   params: { from: 1, to: 2 },
 });
 ```

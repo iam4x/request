@@ -732,8 +732,8 @@ describe("request timeout", () => {
 
 describe("request url fallback", () => {
   const originalFetch = global.fetch;
-  const primaryUrl = "https://charts.proliquid.xyz/data";
-  const fallbackUrl = "https://charts.api-proliquid.com/data";
+  const primaryUrl = "https://api.example.com/data";
+  const fallbackUrl = "https://backup.example.com/data";
 
   const advanceTimersByTime = async (milliseconds: number) => {
     await Promise.resolve();
