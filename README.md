@@ -72,7 +72,7 @@ Makes an HTTP request with the specified options.
 
 #### Parameters
 
-- `req.url` (string | URL, required) - The URL to make the request to
+- `req.url` (string | URL | non-empty list, required) - The URL to request. Pass an ordered list to try fallback hosts after a connect-class failure
 - `req.method` (string, optional) - HTTP method (`GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`) or any custom method string. Defaults to `GET`
 - `req.headers` (HeadersInit, optional) - Custom headers to include in the request
 - `req.params` (RequestParams, optional) - Query string parameters. `undefined` values are omitted and `null` values serialize as bare keys
@@ -82,7 +82,7 @@ Makes an HTTP request with the specified options.
 - `req.okStatuses` (number[] | function, optional) - Accepted statuses. Defaults to native `response.ok`
 - `req.retries` (number, optional) - Legacy number of retry attempts on failure. Defaults to `0`
 - `req.retry` (RetryOptions, optional) - Retry strategy with attempts, delay, backoff, jitter, status/error predicates, and `Retry-After` support
-- `req.timeout` (number, optional) - Request timeout in milliseconds. Uses `AbortController` internally. If both `timeout` and `retries` are set, each retry gets its own fresh timeout
+- `req.timeout` (number, optional) - Request timeout in milliseconds. Uses `AbortController` internally. If both `timeout` and `retries` are set, each retry gets its own fresh timeout. When `url` is a list and `timeout` is omitted, the default is `10000` so a hung primary cannot block fallback
 - `req.fetch` (typeof fetch, optional) - Custom fetch implementation
 - `req.proxy` (string, optional) - Proxy URL to route the request through (runtime-dependent)
 - `req.keepalive` (boolean, optional) - Forwarded to `fetch` when provided. In Bun, set `false` to disable connection reuse for the request
@@ -221,6 +221,26 @@ const queued = await request({
 });
 ```
 
+### Fallback URLs
+
+Pass an ordered list of URLs when a host may be unreachable. The library tries the next URL immediately after a connect-class failure (`RequestTimeoutError`, `TypeError`, DNS or socket errors) or a `502` / `503` / `504`. It does not switch hosts on `4xx`, on a caller `AbortSignal`, or after sending a stream body.
+
+Retries still apply after the list is exhausted. A later retry walks the list from the start. `params` are appended to whichever URL is in play. `proxy` is sent with every candidate.
+
+Single-URL callers are unchanged. A list without `timeout` gets a 10 second connect timeout.
+
+```typescript
+const data = await request({
+  url: [
+    "https://charts.proliquid.xyz/range",
+    "https://charts.api-proliquid.com/range",
+  ],
+  params: { from: 1, to: 2 },
+});
+```
+
+An empty list throws `RequestUrlError`.
+
 ### Timeout
 
 Use `timeout` (in milliseconds) to abort a request that takes too long. A fresh `AbortController` is created for every attempt, so each retry gets its own independent timeout window:
@@ -295,7 +315,7 @@ const csv = await request({
 
 ### Error Handling
 
-The `request` function throws a `RequestError` for unacceptable HTTP responses, a `RequestParseError` for successful responses that cannot be parsed as requested, and a `RequestTimeoutError` when the timeout is exceeded on every attempt:
+The `request` function throws a `RequestError` for unacceptable HTTP responses, a `RequestParseError` for successful responses that cannot be parsed as requested, a `RequestTimeoutError` when the timeout is exceeded on every attempt, and a `RequestUrlError` when `url` is an empty list:
 
 ```typescript
 import {
@@ -303,6 +323,7 @@ import {
   RequestError,
   RequestParseError,
   RequestTimeoutError,
+  RequestUrlError,
 } from "@iam4x/request";
 
 try {
@@ -321,6 +342,9 @@ try {
   }
   if (error instanceof RequestTimeoutError) {
     console.error(`Timed out after ${error.timeout}ms`);
+  }
+  if (error instanceof RequestUrlError) {
+    console.error(error.message);
   }
 }
 ```
@@ -343,6 +367,10 @@ Extends `RequestError` and preserves the successful response status plus the raw
 
 - `message` (string) - Error message (`"Request timed out after {n}ms"`)
 - `timeout` (number) - The timeout value that was exceeded, in milliseconds
+
+#### `RequestUrlError` Class
+
+- `message` (string) - Error message (`"Request url must contain at least one URL"`)
 
 ## RequestParams Type
 
@@ -373,7 +401,10 @@ The package exports:
 - `RequestError` - Error class for non-2xx HTTP responses
 - `RequestParseError` - Error class for successful responses that fail parsing
 - `RequestTimeoutError` - Error class thrown when a request exceeds its timeout
+- `RequestUrlError` - Error class thrown when `url` is an empty list
 - `Request` - Type for request options
+- `RequestUrl` - Type for a single request URL
+- `RequestUrlList` - Type for a non-empty list of request URLs
 - `RequestParams` - Type for request parameters
 - `RequestBody` - Type for supported request bodies
 - `RequestMetadata` - Type for metadata responses
