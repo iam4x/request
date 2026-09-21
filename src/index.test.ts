@@ -13,6 +13,8 @@ import {
   RequestError,
   RequestParseError,
   RequestTimeoutError,
+  RequestUrlError,
+  type RequestUrlList,
 } from "./index";
 
 describe("request utility", () => {
@@ -725,5 +727,226 @@ describe("request timeout", () => {
     await request({ url: "https://api.example.com/data", timeout: 50 });
 
     expect(clearTimeoutMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("request url fallback", () => {
+  const originalFetch = global.fetch;
+  const primaryUrl = "https://api.example.com/data";
+  const fallbackUrl = "https://backup.example.com/data";
+
+  const advanceTimersByTime = async (milliseconds: number) => {
+    await Promise.resolve();
+    jest.advanceTimersByTime(milliseconds);
+    await Promise.resolve();
+  };
+
+  const fetchUrls = (fetchMock: ReturnType<typeof mock>) =>
+    fetchMock.mock.calls.map((call) => call[0]);
+
+  afterEach(() => {
+    jest.useRealTimers();
+    global.fetch = originalFetch;
+  });
+
+  test("falls back after the primary URL times out and applies a default timeout", async () => {
+    jest.useFakeTimers();
+
+    const fetchMock = mock((url: string | URL, opts?: RequestInit) => {
+      if (String(url) === primaryUrl) {
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        });
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const resultPromise = request({
+      url: [primaryUrl, fallbackUrl],
+    });
+
+    await advanceTimersByTime(10_000);
+
+    await expect(resultPromise).resolves.toEqual({ data: "ok" });
+
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl, fallbackUrl]);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchMock.mock.calls[1]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("falls back after a network error on the primary URL", async () => {
+    const fetchMock = mock((url: string | URL) => {
+      if (String(url) === primaryUrl) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await request({
+      url: [primaryUrl, fallbackUrl],
+    });
+
+    expect(result).toEqual({ data: "ok" });
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl, fallbackUrl]);
+  });
+
+  test("does not fall back after a 404", async () => {
+    const fetchMock = mock((url: string | URL) => {
+      if (String(url) === primaryUrl) {
+        return Promise.resolve(new Response("missing", { status: 404 }));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      request({
+        url: [primaryUrl, fallbackUrl],
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl]);
+  });
+
+  test("does not fall back after the caller aborts", async () => {
+    const controller = new AbortController();
+    const fetchMock = mock((_url: string | URL, opts?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        opts?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const resultPromise = request({
+      url: [primaryUrl, fallbackUrl],
+      signal: controller.signal,
+    });
+
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(resultPromise).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl]);
+  });
+
+  test("falls back after a 502 from the primary URL", async () => {
+    const fetchMock = mock((url: string | URL) => {
+      if (String(url) === primaryUrl) {
+        return Promise.resolve(new Response("bad gateway", { status: 502 }));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await request({
+      url: [primaryUrl, fallbackUrl],
+    });
+
+    expect(result).toEqual({ data: "ok" });
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl, fallbackUrl]);
+  });
+
+  test("does not fall back after a 500 from the primary URL", async () => {
+    const fetchMock = mock((url: string | URL) => {
+      if (String(url) === primaryUrl) {
+        return Promise.resolve(new Response("error", { status: 500 }));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      request({
+        url: [primaryUrl, fallbackUrl],
+      }),
+    ).rejects.toMatchObject({ status: 500 });
+
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl]);
+  });
+
+  test("walks the URL list again after retries remain", async () => {
+    let callCount = 0;
+    const fetchMock = mock((_url: string | URL) => {
+      callCount++;
+      if (callCount < 3) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await request({
+      url: [primaryUrl, fallbackUrl],
+      retry: { attempts: 1, delayMs: 0 },
+    });
+
+    expect(result).toEqual({ data: "ok" });
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl, fallbackUrl, primaryUrl]);
+  });
+
+  test("appends params to the fallback URL", async () => {
+    const fetchMock = mock((url: string | URL) => {
+      if (String(url).startsWith(primaryUrl)) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+
+      return Promise.resolve(new Response(JSON.stringify({ data: "ok" })));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await request({
+      url: [primaryUrl, fallbackUrl],
+      params: { id: 123 },
+    });
+
+    expect(fetchUrls(fetchMock)).toEqual([
+      `${primaryUrl}?id=123`,
+      `${fallbackUrl}?id=123`,
+    ]);
+  });
+
+  test("rejects an empty URL list", async () => {
+    await expect(
+      request({
+        url: [] as unknown as RequestUrlList,
+      }),
+    ).rejects.toBeInstanceOf(RequestUrlError);
+  });
+
+  test("does not fall back after sending a stream body", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload"));
+        controller.close();
+      },
+    });
+    const fetchMock = mock(() =>
+      Promise.reject(new TypeError("Failed to fetch")),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      request({
+        url: [primaryUrl, fallbackUrl],
+        method: "POST",
+        body,
+      }),
+    ).rejects.toBeInstanceOf(TypeError);
+
+    expect(fetchUrls(fetchMock)).toEqual([primaryUrl]);
   });
 });

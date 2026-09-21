@@ -59,8 +59,11 @@ export type RequestMetadata<T> = {
 
 export type FetchImplementation = typeof fetch;
 
+export type RequestUrl = string | URL;
+export type RequestUrlList = readonly [RequestUrl, ...RequestUrl[]];
+
 export type Request = {
-  url: string | URL;
+  url: RequestUrl | RequestUrlList;
   headers?: HeadersInit;
   method?: RequestMethod;
   params?: RequestParams;
@@ -157,8 +160,30 @@ export class RequestTimeoutError extends Error {
   }
 }
 
+export class RequestUrlError extends Error {
+  constructor(message = "Request url must contain at least one URL") {
+    super(message);
+    this.name = "RequestUrlError";
+  }
+}
+
 const idempotentMethods = new Set(["GET", "HEAD", "PUT", "DELETE", "OPTIONS"]);
 const defaultRetryStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+const fallbackStatuses = new Set([502, 503, 504]);
+const connectFailureCodes = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+const MULTI_URL_DEFAULT_TIMEOUT_MS = 10_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -213,7 +238,7 @@ const prepareBodyAndHeaders = (req: Request) => {
   return { body: req.body, headers };
 };
 
-const appendParams = (url: string | URL, params?: RequestParams) => {
+const appendParams = (url: RequestUrl, params?: RequestParams) => {
   const baseUrl = String(url);
   if (!params) return baseUrl;
 
@@ -221,6 +246,64 @@ const appendParams = (url: string | URL, params?: RequestParams) => {
   if (!query) return baseUrl;
 
   return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}${query}`;
+};
+
+const toUrlList = (url: RequestUrl | readonly RequestUrl[]): RequestUrlList => {
+  if (typeof url === "string" || url instanceof URL) {
+    return [url];
+  }
+
+  const [first, ...rest] = url;
+  if (first === undefined) {
+    throw new RequestUrlError();
+  }
+
+  return [first, ...rest];
+};
+
+const errorCode = (error: unknown) => {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  return typeof error.code === "string" ? error.code : undefined;
+};
+
+const shouldFallbackUrl = (error: unknown) => {
+  if (error instanceof RequestTimeoutError) return true;
+  if (error instanceof RequestError) {
+    return fallbackStatuses.has(error.status);
+  }
+  if (error instanceof TypeError) return true;
+
+  const code = errorCode(error);
+  return code !== undefined && connectFailureCodes.has(code);
+};
+
+const isExternalAbort = (error: unknown, req: Request) => {
+  if (error instanceof RequestTimeoutError) return false;
+  return Boolean(req.signal?.aborted);
+};
+
+const isReplayableBody = (body: RequestBody | undefined) => {
+  if (body === undefined || body === null) return true;
+  if (isPlainObject(body)) return true;
+  if (typeof body === "string") return true;
+  if (typeof Blob !== "undefined" && body instanceof Blob) return true;
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) {
+    return true;
+  }
+  if (ArrayBuffer.isView(body)) return true;
+  if (
+    typeof URLSearchParams !== "undefined" &&
+    body instanceof URLSearchParams
+  ) {
+    return true;
+  }
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    return true;
+  }
+  return false;
 };
 
 const isAcceptedStatus = (
@@ -432,14 +515,14 @@ const createAttemptSignal = (req: Request) => {
   };
 };
 
-const runAttempt = async <T>(req: Request) => {
-  const url = appendParams(req.url, req.params);
+const runAttempt = async <T>(req: Request, url: RequestUrl) => {
+  const requestUrl = appendParams(url, req.params);
   const attemptSignal = createAttemptSignal(req);
   const fetchImpl = req.fetch ?? fetch;
 
   try {
     const response = await fetchImpl(
-      url,
+      requestUrl,
       buildFetchOptions(req, attemptSignal.signal),
     );
 
@@ -575,23 +658,45 @@ const retryDelay = (
 };
 
 const runWithRetries = async <T>(req: Request) => {
-  const retryAttempts = retryAttemptsFor(req);
+  const urls = toUrlList(req.url);
+  const timeout =
+    req.timeout === undefined && Array.isArray(req.url)
+      ? MULTI_URL_DEFAULT_TIMEOUT_MS
+      : req.timeout;
+  const prepared: Request = { ...req, timeout };
+  const retryAttempts = retryAttemptsFor(prepared);
+  const replayable = isReplayableBody(prepared.body);
 
   for (let failedAttempt = 0; ; failedAttempt++) {
-    try {
-      return await runAttempt<T>(req);
-    } catch (error) {
-      if (
-        failedAttempt >= retryAttempts ||
-        !shouldRetry(error, req, failedAttempt + 1)
-      ) {
-        throw error;
-      }
+    let lastError: unknown;
 
-      const delay = retryDelay(error, req.retry, failedAttempt + 1);
-      if (delay > 0) {
-        await sleep(delay);
+    for (let urlIndex = 0; urlIndex < urls.length; urlIndex++) {
+      try {
+        return await runAttempt<T>(prepared, urls[urlIndex]);
+      } catch (error) {
+        lastError = error;
+
+        if (
+          urlIndex === urls.length - 1 ||
+          !replayable ||
+          isExternalAbort(error, prepared) ||
+          !shouldFallbackUrl(error)
+        ) {
+          break;
+        }
       }
+    }
+
+    if (
+      failedAttempt >= retryAttempts ||
+      !shouldRetry(lastError, prepared, failedAttempt + 1)
+    ) {
+      throw lastError;
+    }
+
+    const delay = retryDelay(lastError, prepared.retry, failedAttempt + 1);
+    if (delay > 0) {
+      await sleep(delay);
     }
   }
 };
