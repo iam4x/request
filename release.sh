@@ -39,7 +39,7 @@ echo -e "${GREEN}Lint passed!${NC}"
 
 # Step 2: Run tests
 echo -e "${YELLOW}Running tests...${NC}"
-bun test
+bun run test
 echo -e "${GREEN}Tests passed!${NC}"
 
 # Step 3: Bump version
